@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 // DÜZELTİLMİŞ YOLLAR
 import 'models/user.dart';
 import 'services/local_auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fba;
 
 // main.dart'tan alınan sabitler
 const Color hintColor = Colors.grey;
@@ -52,55 +53,60 @@ class _KayitEkraniState extends State<KayitEkrani> {
   }
 
   void _handleRegistration() async {
-    final String isimSoyisim = _isimSoyisimController.text.trim();
-    final String kullaniciAdi = _kullaniciAdiController.text.trim();
     final String email = _emailController.text.trim();
-    final String telefon = _telefonController.text.trim();
     final String password = _passwordController.text;
     final String confirmPassword = _confirmPasswordController.text;
 
-    // Basit doğrulama kontrolleri
-    if (isimSoyisim.isEmpty || kullaniciAdi.isEmpty || email.isEmpty || telefon.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
-      _gosterSnackBar('Hata: Tüm alanlar doldurulmalıdır.', isError: true);
+    // Önceki yerel validasyon kontrollerinizi koruyun
+    if (email.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
+      _gosterSnackBar('Lütfen tüm alanları doldurun.', isError: true);
       return;
     }
-
-    if (!email.contains('@')) {
-      _gosterSnackBar('Hata: Lütfen geçerli bir e-posta adresi girin.', isError: true);
-      return;
-    }
-
-    if (password.length < 6) {
-      _gosterSnackBar('Hata: Şifre en az 6 karakter olmalıdır.', isError: true);
-      return;
-    }
-
     if (password != confirmPassword) {
-      _gosterSnackBar('Hata: Şifreler uyuşmuyor.', isError: true);
+      _gosterSnackBar('Şifreler uyuşmuyor.', isError: true);
       return;
     }
 
-    // Yeni kullanıcı nesnesi oluştur
-    final newUser = User(
-      isimSoyisim: isimSoyisim,
-      kullaniciAdi: kullaniciAdi,
-      email: email,
-      telefon: telefon,
-      sifre: password,
-      favoritePlaceIds: [], // Yeni kullanıcı için boş favori listesi
+    // Basit bir loading göstergesi ekleyelim
+    showDialog(
+      context: context,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+      barrierDismissible: false,
     );
 
-    // Servis ile kaydı dene
-    final bool success = await _authService.registerUser(newUser);
+    try {
+      // 🔥 Firebase'e KAYIT İŞLEMİ 🔥
+      await fba.FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    if (!mounted) return; // widget hala ağaçta mı kontrol et
+      // Başarı durumunda
+      Navigator.pop(context); // Loading ekranını kapat
+      _gosterSnackBar('Kayıt Başarılı! Otomatik olarak giriş yapıldı.', isError: false);
 
-    if (success) {
-      _gosterSnackBar('Kayıt başarılı! Lütfen giriş yapın.', isError: false);
-      // Kayıt başarılıysa giriş ekranına geri dön
+      // Oturum açma, main.dart'taki StreamBuilder tarafından otomatik olarak algılanacak
+      // ve sizi Ana Ekrana yönlendirecektir.
+
+    } on fba.FirebaseAuthException catch (e) {
+      // Hata durumunda
+      Navigator.pop(context); // Loading ekranını kapat
+      String hataMesaji = 'Kayıt başarısız oldu.';
+
+      if (e.code == 'weak-password') {
+        hataMesaji = 'Şifre çok zayıf. Lütfen daha güçlü bir şifre kullanın.';
+      } else if (e.code == 'email-already-in-use') {
+        hataMesaji = 'Bu e-posta adresi zaten kayıtlı.';
+      } else if (e.code == 'invalid-email') {
+        hataMesaji = 'Geçersiz e-posta adresi formatı.';
+      } else {
+        hataMesaji = 'Bilinmeyen Hata: ${e.message}';
+      }
+
+      _gosterSnackBar(hataMesaji, isError: true);
+    } catch (e) {
       Navigator.pop(context);
-    } else {
-      _gosterSnackBar('Hata: Bu e-posta adresi zaten kayıtlı.', isError: true);
+      _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
     }
   }
 

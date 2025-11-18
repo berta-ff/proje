@@ -1,4 +1,10 @@
 import 'package:flutter/material.dart';
+// 🔥 YENİ EKLE: Firebase Auth paketini prefix ile import et
+import 'package:firebase_auth/firebase_auth.dart' as fba;
+
+
+// main.dart'tan alınan sabitler (Bunların başka bir yerden geldiği varsayılıyor)
+const Color accentColor = Colors.lightBlue; // Veya uygulamanızdaki gerçek değeri
 
 class SifreSifirlamaEkrani extends StatefulWidget {
   const SifreSifirlamaEkrani({super.key});
@@ -28,38 +34,78 @@ class _SifreSifirlamaEkraniState extends State<SifreSifirlamaEkrani> {
     );
   }
 
-  void _sifreSifirla() {
-    final String email = _emailController.text;
+  // ŞİFRE SIFIRLAMA İŞLEMİNİ YÖNETEN METOT (FIREBASE İLE GÜNCELLENDİ)
+  void _sifreSifirla() async {
+    final String email = _emailController.text.trim();
 
-    if (!email.contains('@')) {
+    if (email.isEmpty || !email.contains('@')) {
       _gosterSnackBar('Hata: Lütfen geçerli bir e-posta adresi girin.', isError: true);
       return;
     }
 
-    debugPrint('Şifre Sıfırlama Denemesi: E-posta: $email');
-    _gosterSnackBar('Şifre sıfırlama bağlantısı e-posta adresinize gönderildi!', isError: false);
+    // Loading göstergesini başlat
+    showDialog(
+      context: context,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+      barrierDismissible: false,
+    );
 
-    // 1.5 saniye sonra geri dön
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    try {
+      // 🔥 Firebase Şifre Sıfırlama E-postası Gönderme İşlemi 🔥
+      await fba.FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+
+      // Başarı durumunda
+      if (!mounted) return;
+      Navigator.pop(context); // Loading ekranını kapat
+
+      _gosterSnackBar(
+        'Şifre sıfırlama bağlantısı $email adresine gönderildi. Lütfen gelen kutunuzu kontrol edin.',
+        isError: false,
+      );
+
+      // Başarılı işlem sonrası Giriş Ekranına geri dön
+      // 1.5 saniye bekleme yerine hemen geri dönülüyor.
+      Navigator.pop(context);
+
+    } on fba.FirebaseAuthException catch (e) {
+      // Hata durumunda
+      if (!mounted) return;
+      Navigator.pop(context); // Loading ekranını kapat
+
+      String hataMesaji = 'Şifre sıfırlama bağlantısı gönderilemedi.';
+
+      if (e.code == 'user-not-found') {
+        hataMesaji = 'Bu e-posta adresine ait kullanıcı bulunamadı.';
+      } else if (e.code == 'invalid-email') {
+        hataMesaji = 'Geçersiz e-posta adresi formatı.';
+      } else {
+        hataMesaji = 'Bilinmeyen Hata: ${e.message}';
+      }
+
+      _gosterSnackBar(hataMesaji, isError: true);
+    } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
-    });
+      _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {
-    final accentColor = Theme.of(context).colorScheme.secondary;
+    // Tema renklerini al
     final bodyTextColor = Theme.of(context).textTheme.bodyMedium?.color;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Şifremi Unuttum'),
+        title: const Text('Şifre Sıfırlama'),
       ),
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32.0),
+          padding: const EdgeInsets.all(30.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Icon(
                 Icons.lock_open,

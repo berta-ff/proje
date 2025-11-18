@@ -5,8 +5,15 @@ import 'dart:async'; // Timer için eklendi
 // DÜZELTİLMİŞ/EKSİK IMPORT'LAR
 import 'models/user.dart';
 import 'giris_ekrani.dart';
-import 'kayit_ekrani.dart'; // <--- BU SATIRI EKLEYİN
+import 'kayit_ekrani.dart';
 import 'services/local_auth_service.dart';
+
+// 🔥 Sadece tek bir kez ve prefix ile import edin
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fba;
+import 'package:flutter/widgets.dart'; // WidgetsFlutterBinding için
+import 'sifre_sifirlama_ekrani.dart';
 
 // Açık Mavi/Beyaz Tema Renkleri (BU KODLAR IMPORT'LARDAN SONRA GELMELİ)
 const Color accentColor = Colors.lightBlue;
@@ -229,7 +236,15 @@ ThemeData _buildCustomTheme({required Brightness brightness}) {
 }
 
 
-void main() {
+void main() async { // async eklendi
+  // 1. Flutter'ın widget bağlarını hazırlar (Firebase init için zorunlu)
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 2. Firebase'i başlatır
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const MyApp());
 }
 
@@ -252,13 +267,15 @@ class MyApp extends StatelessWidget {
             themeMode: themeNotifier.themeMode,
 
             // Uygulama Giriş Noktası
-            initialRoute: '/login',
+            initialRoute: '/auth_check',
             routes: {
+              '/auth_check': (context) => const AuthCheckScreen(),
               // Giriş ekranını harici dosyadan alıyoruz
               '/login': (context) => const GirisEkrani(),
               '/kayit': (context) => const KayitEkrani(),
               '/': (context) => const MainAppWrapper(),
               '/settings': (context) => const SettingsScreen(),
+              '/sifre_sifirlama': (context) => const SifreSifirlamaEkrani(),
               '/profile': (context) => const ProfileInfoScreen(showAppBar: true),
               '/edit_profile': (context) => const EditProfileScreen(),
               '/change_password': (context) => const ChangePasswordScreen(),
@@ -1860,6 +1877,38 @@ class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class AuthCheckScreen extends StatelessWidget {
+  const AuthCheckScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // ⚠️ StreamBuilder, Firebase'in oturum durumunu sürekli dinler.
+    return StreamBuilder<fba.User?>(
+      // fba.User: Firebase'in User sınıfı.
+      stream: fba.FirebaseAuth.instance.authStateChanges(),
+      // fba.FirebaseAuth: Firebase'in Auth sınıfı.
+
+      builder: (context, snapshot) {
+        // 1. Bağlantı bekleme durumunda (Yükleniyor ekranı)
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        // 2. Kullanıcı giriş yapmış mı kontrolü.
+        if (snapshot.hasData && snapshot.data != null) {
+          // Kullanıcı giriş yapmış. Ana ekranı göster.
+          return const MainAppWrapper();
+        }
+
+        // 3. Kullanıcı giriş yapmamış. Giriş ekranını göster.
+        return const GirisEkrani();
+      },
+    );
+  }
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {

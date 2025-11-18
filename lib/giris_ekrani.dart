@@ -5,6 +5,7 @@ import 'models/user.dart';
 import 'services/local_auth_service.dart';
 import 'package:provider/provider.dart';
 import 'main.dart'; // UserNotifier sınıfını buradan alacak
+import 'package:firebase_auth/firebase_auth.dart' as fba; // Firebase Auth
 
 // main.dart'tan alınan sabitler
 const Color hintColor = Colors.grey;
@@ -22,7 +23,7 @@ class _GirisEkraniState extends State<GirisEkrani> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  final LocalAuthService _authService = LocalAuthService();
+  // LocalAuthService nesnesi artık _handleLogin'de kullanılmadığı için burada kalması sorun yaratmaz.
 
   @override
   void dispose() {
@@ -53,38 +54,70 @@ class _GirisEkraniState extends State<GirisEkrani> {
     Navigator.pushNamed(context, '/kayit');
   }
 
-  // GİRİŞ İŞLEMİNİ YÖNETEN METOT
+  // GİRİŞ İŞLEMİNİ YÖNETEN METOT (DÜZELTİLDİ: Yönlendirme Eklendi)
   void _handleLogin() async {
     final String email = _emailController.text.trim();
     final String password = _passwordController.text;
 
-    if (!email.contains('@') || password.isEmpty) {
-      _gosterSnackBar('Hata: E-posta veya şifre boş/geçersiz.', isError: true);
+    if (email.isEmpty || password.isEmpty) {
+      _gosterSnackBar('Lütfen e-posta ve şifrenizi girin.', isError: true);
       return;
     }
 
-    final User? user = await _authService.authenticateUser(email, password);
+    // Loading göstergesini başlat
+    showDialog(
+      context: context,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+      barrierDismissible: false,
+    );
 
-    if (!mounted) return; // widget hala ağaçta mı kontrol et
+    try {
+      // 🔥 Firebase'e GİRİŞ İŞLEMİ 🔥
+      await fba.FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
 
-    if (user != null) {
-      // UserNotifier'ı güncelle
-      Provider.of<UserNotifier>(context, listen: false).login(user);
-      _gosterSnackBar('Giriş başarılı! Hoş geldiniz, ${user.kullaniciAdi}', isError: false);
-      // Ana ekrana yönlendir
-      Navigator.pushReplacementNamed(context, '/');
-    } else {
-      _gosterSnackBar('Hata: E-posta veya şifre hatalı.', isError: true);
+      // Başarı durumunda
+      if (!mounted) return;
+      Navigator.pop(context); // Loading ekranını kapat
+
+      _gosterSnackBar('Giriş Başarılı! Yönlendiriliyorsunuz.', isError: false);
+
+      // 🔥 KESİN ÇÖZÜM: BAŞARILI GİRİŞTE ANA EKRANA ZORLA YÖNLENDİRME 🔥
+      // Bu komut, ikinci girişteki takılma sorununu çözecektir.
+      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+
+    } on fba.FirebaseAuthException catch (e) {
+      // Hata durumunda
+      if (!mounted) return;
+      Navigator.pop(context); // Loading ekranını kapat
+      String hataMesaji = 'Giriş başarısız oldu.';
+
+      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+        hataMesaji = 'Girdiğiniz e-posta veya şifre hatalı.';
+      } else if (e.code == 'invalid-email') {
+        hataMesaji = 'Geçersiz e-posta adresi formatı.';
+      } else {
+        hataMesaji = 'Bilinmeyen Hata: ${e.message}';
+      }
+
+      _gosterSnackBar(hataMesaji, isError: true);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
     }
   }
 
-  // YENİ METOT: Misafir olarak giriş yapma (Error fix)
+  // Misafir olarak giriş yapma metodu
   void _guestLogin() {
-    // UserNotifier'ın guestLogin metodunu çağır
+    // UserNotifier'ın guestLogin metodunu çağır (Bu hala yerel auth mantığıdır)
     Provider.of<UserNotifier>(context, listen: false).guestLogin();
 
     // Ana ekrana yönlendir
-    Navigator.pushReplacementNamed(context, '/');
+    // Burada da pushNamedAndRemoveUntil kullanmak daha iyidir.
+    Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
   }
 
 
