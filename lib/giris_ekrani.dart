@@ -1,17 +1,14 @@
-//giris_ekrani.dart
+// giris_ekrani.dart
 import 'package:flutter/material.dart';
-
-// Gerekli import'lar
-import 'models/user.dart';
-import 'services/local_auth_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
-import 'main.dart'; // UserNotifier sınıfını buradan alacak
-import 'package:firebase_auth/firebase_auth.dart' as fba; // Firebase Auth
+import 'package:firebase_auth/firebase_auth.dart' as fba;
+
+import 'models/user.dart';
+import 'main.dart'; // UserNotifier için
 
 // main.dart'tan alınan sabitler
 const Color hintColor = Colors.grey;
-const Color accentColor = Colors.lightBlue;
-
 
 class GirisEkrani extends StatefulWidget {
   const GirisEkrani({super.key});
@@ -24,7 +21,8 @@ class _GirisEkraniState extends State<GirisEkrani> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  // LocalAuthService nesnesi artık _handleLogin'de kullanılmadığı için burada kalması sorun yaratmaz.
+  // 🔥 YENİ: Loading durumunu kontrol eden değişken
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -34,6 +32,7 @@ class _GirisEkraniState extends State<GirisEkrani> {
   }
 
   void _gosterSnackBar(String mesaj, {required bool isError}) {
+    if (!mounted) return;
     final accentColor = Theme.of(context).colorScheme.secondary;
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -46,16 +45,13 @@ class _GirisEkraniState extends State<GirisEkrani> {
   }
 
   void _sifremiUnuttum() {
-    // Şifre sıfırlama ekranı rotası
     Navigator.pushNamed(context, '/sifre_sifirlama');
   }
 
   void _kaydol() {
-    // Kaydol ekranı rotası
     Navigator.pushNamed(context, '/kayit');
   }
 
-  // GİRİŞ İŞLEMİNİ YÖNETEN METOT (DÜZELTİLDİ: Yönlendirme Eklendi)
   void _handleLogin() async {
     final String email = _emailController.text.trim();
     final String password = _passwordController.text;
@@ -65,86 +61,127 @@ class _GirisEkraniState extends State<GirisEkrani> {
       return;
     }
 
-    // Loading göstergesini başlat
-    showDialog(
-      context: context,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-      barrierDismissible: false,
-    );
+    // 1. Loading'i Başlat (Dialog açmıyoruz, değişkeni değiştiriyoruz)
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
-      // 🔥 Firebase'e GİRİŞ İŞLEMİ 🔥
-      await fba.FirebaseAuth.instance.signInWithEmailAndPassword(
+      // 2. Firebase Auth Girişi
+      fba.UserCredential userCredential = await fba.FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Başarı durumunda
-      if (!mounted) return;
-      Navigator.pop(context); // Loading ekranını kapat
+      String uid = userCredential.user!.uid;
 
-      _gosterSnackBar('Giriş Başarılı! Yönlendiriliyorsunuz.', isError: false);
+      // 3. Firestore'dan veriyi çek
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
 
-      // 🔥 KESİN ÇÖZÜM: BAŞARILI GİRİŞTE ANA EKRANA ZORLA YÖNLENDİRME 🔥
-      // Bu komut, ikinci girişteki takılma sorununu çözecektir.
-      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+      User loggedInUser;
 
-    } on fba.FirebaseAuthException catch (e) {
-      // Hata durumunda
-      if (!mounted) return;
-      Navigator.pop(context); // Loading ekranını kapat
-      String hataMesaji = 'Giriş başarısız oldu.';
+      if (userDoc.exists) {
+        // A. Kullanıcı verisi VAR
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
 
-      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
-        hataMesaji = 'Girdiğiniz e-posta veya şifre hatalı.';
-      } else if (e.code == 'invalid-email') {
-        hataMesaji = 'Geçersiz e-posta adresi formatı.';
+        List<dynamic> favListDyn = userData['favoritePlaceIds'] ?? [];
+        List<int> favList = favListDyn.map((e) => int.parse(e.toString())).toList();
+
+        loggedInUser = User(
+          isimSoyisim: userData['isimSoyisim'] ?? '',
+          kullaniciAdi: userData['kullaniciAdi'] ?? '',
+          email: userData['email'] ?? email,
+          telefon: userData['telefon'] ?? '',
+          sifre: "",
+          favoritePlaceIds: favList,
+        );
       } else {
-        hataMesaji = 'Bilinmeyen Hata: ${e.message}';
+        // B. Kullanıcı verisi YOK -> Oluştur
+        loggedInUser = User(
+          isimSoyisim: "Kullanıcı",
+          kullaniciAdi: email.split('@')[0],
+          email: email,
+          telefon: "",
+          sifre: "",
+          favoritePlaceIds: [],
+        );
+
+        await FirebaseFirestore.instance.collection('users').doc(uid).set({
+          'isimSoyisim': loggedInUser.isimSoyisim,
+          'kullaniciAdi': loggedInUser.kullaniciAdi,
+          'email': loggedInUser.email,
+          'telefon': loggedInUser.telefon,
+          'favoritePlaceIds': [],
+        });
       }
 
+      // 4. Provider'ı güncelle ve Yönlendir
+      // Not: AuthCheckScreen zaten otomatik yönlendirecek ama biz garanti olsun diye Provider'ı güncelliyoruz.
+      if (mounted) {
+        Provider.of<UserNotifier>(context, listen: false).login(loggedInUser);
+
+        // Başarılı olduğunda loading'i kapatmaya gerek yok, çünkü sayfa değişecek.
+        // Ama yine de temiz kod için:
+        setState(() {
+          _isLoading = false;
+        });
+
+        _gosterSnackBar('Giriş Başarılı!', isError: false);
+        // Ana Ekrana Git
+        Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+      }
+
+    } on fba.FirebaseAuthException catch (e) {
+      // Hata durumunda Loading'i durdur
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+
+      String hataMesaji = 'Giriş başarısız.';
+      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+        hataMesaji = 'E-posta veya şifre hatalı.';
+      } else if (e.code == 'invalid-email') {
+        hataMesaji = 'Geçersiz e-posta formatı.';
+      } else {
+        hataMesaji = 'Hata: ${e.message}';
+      }
       _gosterSnackBar(hataMesaji, isError: true);
+
     } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+      _gosterSnackBar('Beklenmedik bir hata: $e', isError: true);
+      debugPrint("Giriş Hatası: $e");
     }
   }
 
-  // Misafir olarak giriş yapma metodu
   void _guestLogin() {
-    // UserNotifier'ın guestLogin metodunu çağır (Bu hala yerel auth mantığıdır)
     Provider.of<UserNotifier>(context, listen: false).guestLogin();
-
-    // Ana ekrana yönlendir
-    // Burada da pushNamedAndRemoveUntil kullanmak daha iyidir.
     Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
   }
 
-
   @override
   Widget build(BuildContext context) {
-    // Tema renklerini al
     final bodyTextColor = Theme.of(context).textTheme.bodyMedium?.color;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Giriş Ekranı'),
-      ),
+      appBar: AppBar(title: const Text('Giriş Ekranı')),
       body: Stack(
         children: [
-          // ARKA PLAN FOTOĞRAFI - TÜM EKRANI KAPLAYACAK
+          // 1. ARKA PLAN
           Positioned.fill(
             child: Opacity(
-              opacity: 0.9, // Arka plan şeffaflığı (0.1-1.0 arası ayarlayabilirsiniz)
-              child: Image.asset(
-                'assets/images/arkaplann.jpg',
-                fit: BoxFit.cover,
-              ),
+              opacity: 0.9,
+              child: Image.asset('assets/images/arkaplann.jpg', fit: BoxFit.cover),
             ),
           ),
 
-          // ÖN PLANDAKI İÇERİK
+          // 2. İÇERİK
           Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(30.0),
@@ -152,21 +189,15 @@ class _GirisEkraniState extends State<GirisEkrani> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  // SADECE LOGOS.PNG FOTOĞRAFI
                   ClipRRect(
                     borderRadius: BorderRadius.circular(20),
                     child: Image.asset(
-                      'assets/images/logos.png', // logos.png dosyanız
+                      'assets/images/logos.png',
                       width: 150,
                       height: 150,
                       fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(
-                          Icons.image_not_supported,
-                          size: 100,
-                          color: Colors.grey,
-                        );
-                      },
+                      errorBuilder: (context, error, stackTrace) =>
+                      const Icon(Icons.image_not_supported, size: 100, color: Colors.grey),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -179,8 +210,6 @@ class _GirisEkraniState extends State<GirisEkrani> {
                     ),
                   ),
                   const SizedBox(height: 40),
-
-                  // E-posta Giriş Alanı
                   TextField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -190,10 +219,7 @@ class _GirisEkraniState extends State<GirisEkrani> {
                       prefixIcon: Icon(Icons.email),
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
-                  // Şifre Giriş Alanı
                   TextField(
                     controller: _passwordController,
                     obscureText: true,
@@ -203,8 +229,6 @@ class _GirisEkraniState extends State<GirisEkrani> {
                       prefixIcon: Icon(Icons.lock),
                     ),
                   ),
-
-                  // Şifremi Unuttum Bağlantısı
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
@@ -220,31 +244,18 @@ class _GirisEkraniState extends State<GirisEkrani> {
                                 ..strokeWidth = 1
                                 ..color = Colors.black,
                               shadows: const [
-                                Shadow(
-                                  color: Colors.black54,
-                                  offset: Offset(0, 2),
-                                  blurRadius: 4,
-                                ),
+                                Shadow(color: Colors.black54, offset: Offset(0, 2), blurRadius: 4),
                               ],
                             ),
                           ),
-                          const Text(
-                            'Şifremi Unuttum?',
-                            style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.white
-                            ),
-                          ),
+                          const Text('Şifremi Unuttum?', style: TextStyle(fontSize: 14, color: Colors.white)),
                         ],
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 10),
-
-                  // Giriş Butonu (İnce, uzun ikonlu)
                   ElevatedButton(
-                    onPressed: _handleLogin,
+                    onPressed: _isLoading ? null : _handleLogin, // Loading varsa butona basılamaz
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.max,
@@ -255,17 +266,11 @@ class _GirisEkraniState extends State<GirisEkrani> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 20),
-
-                  // Kaydol Bağlantısı
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
-                        'Hesabın yok mu?',
-                        style: TextStyle(color: hintColor),
-                      ),
+                      Text('Hesabın yok mu?', style: TextStyle(color: hintColor)),
                       TextButton(
                         onPressed: _kaydol,
                         child: Stack(
@@ -279,33 +284,20 @@ class _GirisEkraniState extends State<GirisEkrani> {
                                   ..strokeWidth = 1
                                   ..color = Colors.black,
                                 shadows: const [
-                                  Shadow(
-                                    color: Colors.black54,
-                                    offset: Offset(0, 2),
-                                    blurRadius: 4,
-                                  ),
+                                  Shadow(color: Colors.black54, offset: Offset(0, 2), blurRadius: 4),
                                 ],
                               ),
                             ),
-                            const Text(
-                              'Kaydol',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.white,
-                              ),
-                            ),
+                            const Text('Kaydol', style: TextStyle(fontSize: 14, color: Colors.white)),
                           ],
                         ),
                       ),
                     ],
                   ),
-
-                  // YENİ: Misafir olarak Giriş Butonu
                   TextButton(
                     onPressed: _guestLogin,
                     child: Stack(
                       children: [
-                        // Kenar (Stroke)
                         Text(
                           'Misafir olarak devam et',
                           style: TextStyle(
@@ -316,22 +308,13 @@ class _GirisEkraniState extends State<GirisEkrani> {
                               ..strokeWidth = 1
                               ..color = Colors.black,
                             shadows: const [
-                              Shadow(
-                                color: Colors.black,
-                                offset: Offset(0, 2),
-                                blurRadius: 4,
-                              ),
+                              Shadow(color: Colors.black, offset: Offset(0, 2), blurRadius: 4),
                             ],
                           ),
                         ),
-                        // Ana Metin
-                        Text(
+                        const Text(
                           'Misafir olarak devam et',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Colors.white,
-                          ),
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                         ),
                       ],
                     ),
@@ -340,6 +323,15 @@ class _GirisEkraniState extends State<GirisEkrani> {
               ),
             ),
           ),
+
+          // 3. 🔥 YENİ LOADING OVERLAY (En üst katman)
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.5), // Arka planı hafif karart
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
         ],
       ),
     );

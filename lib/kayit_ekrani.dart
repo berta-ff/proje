@@ -1,15 +1,15 @@
-//kayit_ekrani.dart
+// kayit_ekrani.dart
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Firestore için gerekli
+import 'package:provider/provider.dart'; // Provider erişimi için gerekli
+import 'package:firebase_auth/firebase_auth.dart' as fba; // Firebase Auth
 
-// DÜZELTİLMİŞ YOLLAR
-import 'models/user.dart';
-import 'services/local_auth_service.dart';
-import 'package:firebase_auth/firebase_auth.dart' as fba;
+import 'main.dart'; // UserNotifier sınıfına erişim için
+import 'models/user.dart'; // User modelimiz
 
 // main.dart'tan alınan sabitler
 const Color hintColor = Colors.grey;
 const Color accentColor = Colors.lightBlue;
-
 
 class KayitEkrani extends StatefulWidget {
   const KayitEkrani({super.key});
@@ -19,7 +19,7 @@ class KayitEkrani extends StatefulWidget {
 }
 
 class _KayitEkraniState extends State<KayitEkrani> {
-  // 1. YENİ CONTROLLER'LAR EKLENDİ
+  // Controller'lar
   final TextEditingController _isimSoyisimController = TextEditingController();
   final TextEditingController _kullaniciAdiController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -27,11 +27,9 @@ class _KayitEkraniState extends State<KayitEkrani> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
 
-  final LocalAuthService _authService = LocalAuthService();
-
   @override
   void dispose() {
-    // Tüm controller'ları dispose et
+    // Tüm controller'ları bellekten temizle
     _isimSoyisimController.dispose();
     _kullaniciAdiController.dispose();
     _emailController.dispose();
@@ -42,13 +40,16 @@ class _KayitEkraniState extends State<KayitEkrani> {
   }
 
   void _gosterSnackBar(String mesaj, {required bool isError}) {
-    final accentColor = Theme.of(context).colorScheme.secondary;
+    // Eğer context yoksa veya widget ağacından çıktıysa hata vermemesi için kontrol
+    if (!mounted) return;
+
+    final snackBarColor = isError ? Colors.red.shade700 : Theme.of(context).colorScheme.secondary;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(mesaj),
         duration: const Duration(seconds: 2),
-        backgroundColor: isError ? Colors.red.shade700 : accentColor,
+        backgroundColor: snackBarColor,
       ),
     );
   }
@@ -58,17 +59,23 @@ class _KayitEkraniState extends State<KayitEkrani> {
     final String password = _passwordController.text;
     final String confirmPassword = _confirmPasswordController.text;
 
-    // Önceki yerel validasyon kontrollerinizi koruyun
-    if (email.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
+    // Validasyonlar
+    if (_isimSoyisimController.text.isEmpty ||
+        _kullaniciAdiController.text.isEmpty ||
+        email.isEmpty ||
+        _telefonController.text.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
       _gosterSnackBar('Lütfen tüm alanları doldurun.', isError: true);
       return;
     }
+
     if (password != confirmPassword) {
       _gosterSnackBar('Şifreler uyuşmuyor.', isError: true);
       return;
     }
 
-    // Basit bir loading göstergesi ekleyelim
+    // Loading göstergesini başlat
     showDialog(
       context: context,
       builder: (context) => const Center(child: CircularProgressIndicator()),
@@ -76,45 +83,75 @@ class _KayitEkraniState extends State<KayitEkrani> {
     );
 
     try {
-      // 🔥 Firebase'e KAYIT İŞLEMİ 🔥
-      await fba.FirebaseAuth.instance.createUserWithEmailAndPassword(
+      // 1. Firebase Auth ile Kullanıcı Oluştur (E-posta ve Şifre)
+      fba.UserCredential userCredential = await fba.FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // Başarı durumunda
-      Navigator.pop(context); // Loading ekranını kapat
+      // Oluşan kullanıcının benzersiz ID'sini (UID) al
+      String uid = userCredential.user!.uid;
+
+      // 2. User Nesnesini Oluştur (Model)
+      // Şifreyi güvenlik nedeniyle veritabanına kaydetmiyoruz (boş bırakıyoruz)
+      User newUser = User(
+        isimSoyisim: _isimSoyisimController.text,
+        kullaniciAdi: _kullaniciAdiController.text,
+        email: email,
+        telefon: _telefonController.text,
+        sifre: "",
+        favoritePlaceIds: [], // Yeni kullanıcının favorileri boştur
+      );
+
+      // 3. Firestore Veritabanına Kullanıcı Detaylarını Kaydet
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'isimSoyisim': newUser.isimSoyisim,
+        'kullaniciAdi': newUser.kullaniciAdi,
+        'email': newUser.email,
+        'telefon': newUser.telefon,
+        'favoritePlaceIds': [], // Boş liste olarak başlat
+        'createdAt': FieldValue.serverTimestamp(), // Kayıt tarihi (isteğe bağlı)
+      });
+
+      // 4. Provider'ı Güncelle (ÖNEMLİ ADIM)
+      // Bu adım sayesinde kayıt olur olmaz uygulama giriş yapıldığını anlar ve verileri gösterir.
+      if (!mounted) return;
+      Provider.of<UserNotifier>(context, listen: false).login(newUser);
+
+      // Loading ekranını kapat
+      Navigator.pop(context);
+
       _gosterSnackBar('Kayıt Başarılı! Otomatik olarak giriş yapıldı.', isError: false);
 
-      // Oturum açma, main.dart'taki StreamBuilder tarafından otomatik olarak algılanacak
-      // ve sizi Ana Ekrana yönlendirecektir.
+      // Not: main.dart içindeki StreamBuilder (AuthCheckScreen) zaten
+      // authState changes'i dinlediği için otomatik yönlendirme yapabilir,
+      // ancak Provider'ı güncellediğimiz için ekran bilgileri dolu gelecektir.
 
     } on fba.FirebaseAuthException catch (e) {
-      // Hata durumunda
-      Navigator.pop(context); // Loading ekranını kapat
+      // Hata durumunda loading'i kapat
+      if (mounted) Navigator.pop(context);
+
       String hataMesaji = 'Kayıt başarısız oldu.';
 
       if (e.code == 'weak-password') {
         hataMesaji = 'Şifre çok zayıf. Lütfen daha güçlü bir şifre kullanın.';
       } else if (e.code == 'email-already-in-use') {
-        hataMesaji = 'Bu e-posta adresi zaten kayıtlı.';
+        hataMesaji = 'Bu e-posta adresi zaten kullanımda.';
       } else if (e.code == 'invalid-email') {
         hataMesaji = 'Geçersiz e-posta adresi formatı.';
       } else {
-        hataMesaji = 'Bilinmeyen Hata: ${e.message}';
+        hataMesaji = 'Hata: ${e.message}';
       }
 
       _gosterSnackBar(hataMesaji, isError: true);
     } catch (e) {
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
       _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
-    // Unused local variable uyarısı giderildi.
     final bodyTextColor = Theme.of(context).textTheme.bodyMedium?.color;
 
     return Scaffold(
@@ -145,7 +182,7 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 keyboardType: TextInputType.name,
                 decoration: const InputDecoration(
                   labelText: 'İsim Soyisim',
-                  hintText: 'adınızı ve soyadınızı girin',
+                  hintText: 'Adınızı ve soyadınızı girin',
                   prefixIcon: Icon(Icons.badge),
                 ),
               ),
@@ -156,7 +193,7 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 controller: _kullaniciAdiController,
                 decoration: const InputDecoration(
                   labelText: 'Kullanıcı Adı',
-                  hintText: 'sadece harf ve rakam',
+                  hintText: 'Sadece harf ve rakam',
                   prefixIcon: Icon(Icons.person),
                 ),
               ),
@@ -185,7 +222,6 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 ),
               ),
               const SizedBox(height: 20),
-              // **********************************
 
               // Şifre
               TextField(
@@ -193,7 +229,7 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: 'Şifre',
-                  hintText: 'en az 6 karakterli şifre girin',
+                  hintText: 'En az 6 karakter',
                   prefixIcon: Icon(Icons.lock),
                 ),
               ),
@@ -206,7 +242,7 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: 'Şifre Tekrarı',
-                  hintText: 'şifrenizi tekrar girin',
+                  hintText: 'Şifrenizi tekrar girin',
                   prefixIcon: Icon(Icons.lock_reset),
                 ),
               ),
@@ -224,7 +260,10 @@ class _KayitEkraniState extends State<KayitEkrani> {
                 onPressed: () {
                   Navigator.pop(context); // Giriş ekranına geri dön
                 },
-                child: Text('Zaten hesabın var mı? Giriş Yap', style: TextStyle(color: hintColor)),
+                child: const Text(
+                  'Zaten hesabın var mı? Giriş Yap',
+                  style: TextStyle(color: hintColor),
+                ),
               ),
             ],
           ),

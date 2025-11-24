@@ -16,6 +16,7 @@ import 'services/local_auth_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fba;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/widgets.dart'; // WidgetsFlutterBinding için
 import 'sifre_sifirlama_ekrani.dart';
 import 'package:proje/suggest_place_screen.dart'; // Yeni ekranı içe aktar
@@ -118,37 +119,49 @@ class UserNotifier extends ChangeNotifier {
 
   // YENİ: Favori Ekleme/Kaldırma
   Future<void> toggleFavorite(int placeId) async {
-    if (_currentUser == null) {
-      // Misafir kullanıcı için bir şey yapma
-      return;
-    }
+    // 1. Kullanıcı giriş yapmamışsa (Misafir ise) işlem yapma
+    if (_currentUser == null) return;
 
+    // 2. Mevcut favori listesinin bir kopyasını al (Listenin aslı bozulmasın diye)
     List<int> currentFavorites = List.from(_currentUser!.favoritePlaceIds);
     bool isFavorite = currentFavorites.contains(placeId);
 
+    // 3. Listeye ekle veya listeden çıkar
     if (isFavorite) {
       currentFavorites.remove(placeId);
     } else {
       currentFavorites.add(placeId);
     }
 
-    // Kalıcı depolamayı güncelle
-    final LocalAuthService authService = LocalAuthService();
-    final bool success = await authService.updateUserFavorites(_currentUser!, currentFavorites);
+    // 4. Firestore Veritabanını Güncelle
+    try {
+      final firebaseUser = fba.FirebaseAuth.instance.currentUser;
 
-    if (success) {
-      // Eğer kalıcı depolama başarılıysa, UserNotifier'ı güncelle
-      final updatedUser = User(
-        isimSoyisim: _currentUser!.isimSoyisim,
-        kullaniciAdi: _currentUser!.kullaniciAdi,
-        email: _currentUser!.email,
-        telefon: _currentUser!.telefon,
-        sifre: _currentUser!.sifre,
-        favoritePlaceIds: currentFavorites,
-      );
+      if (firebaseUser != null) {
+        // 'users' koleksiyonunda bu kullanıcının belgesini bul ve favori listesini güncelle
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(firebaseUser.uid)
+            .update({
+          'favoritePlaceIds': currentFavorites,
+        });
 
-      _currentUser = updatedUser;
-      notifyListeners();
+        // 5. Güncelleme başarılı olursa uygulamanın hafızasındaki (Ekrandaki) kullanıcıyı güncelle
+        final updatedUser = User(
+          isimSoyisim: _currentUser!.isimSoyisim,
+          kullaniciAdi: _currentUser!.kullaniciAdi,
+          email: _currentUser!.email,
+          telefon: _currentUser!.telefon,
+          sifre: _currentUser!.sifre,
+          favoritePlaceIds: currentFavorites, // Yeni liste
+        );
+
+        _currentUser = updatedUser;
+        notifyListeners(); // Kalbin rengini değiştirmek için ekranı yenile
+      }
+    } catch (e) {
+      // Hata olursa konsola yazdır (İstersen kullanıcıya da gösterebilirsin)
+      debugPrint("Favori güncellenirken hata oluştu: $e");
     }
   }
 }
@@ -177,8 +190,7 @@ ThemeData _buildCustomTheme({required Brightness brightness}) {
   final primaryTextColor = isLight ? Colors.black87 : Colors.white;
 
   // Deprecated `withOpacity` uyarısını gidermek için `withAlpha` kullanıldı.
-  final semiOpaqueColor = primaryTextColor.withAlpha((255 * 0.8).round());
-
+  final semiOpaqueColor = primaryTextColor.withValues(alpha: 0.8);
   return ThemeData(
     primaryColor: accentColor,
     hintColor: accentColor,
@@ -1909,32 +1921,105 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class AuthCheckScreen extends StatelessWidget {
+// Bu yeni AuthCheckScreen, veriyi veritabanından çekene kadar bekler.
+class AuthCheckScreen extends StatefulWidget {
   const AuthCheckScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    // ⚠️ StreamBuilder, Firebase'in oturum durumunu sürekli dinler.
-    return StreamBuilder<fba.User?>(
-      // fba.User: Firebase'in User sınıfı.
-      stream: fba.FirebaseAuth.instance.authStateChanges(),
-      // fba.FirebaseAuth: Firebase'in Auth sınıfı.
+  State<AuthCheckScreen> createState() => _AuthCheckScreenState();
+}
 
+class _AuthCheckScreenState extends State<AuthCheckScreen> {
+  // Veri çekme işleminin o an yapılıp yapılmadığını kontrol eden bayrak
+  // Bu, "loop" (sonsuz döngü) oluşmasını engeller.
+  bool _isFetching = false;
+
+  // Veritabanından kullanıcı verisini çeken fonksiyon
+  Future<void> _fetchUserData(String uid) async {
+    // Eğer zaten çekiyorsak tekrar işlem başlatma
+    if (_isFetching) return;
+
+    _isFetching = true;
+
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .get();
+
+      if (userDoc.exists && mounted) {
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+
+        List<dynamic> favListDyn = userData['favoritePlaceIds'] ?? [];
+        List<int> favList = favListDyn.map((e) => int.parse(e.toString())).toList();
+
+        User appUser = User(
+          isimSoyisim: userData['isimSoyisim'] ?? '',
+          kullaniciAdi: userData['kullaniciAdi'] ?? '',
+          email: userData['email'] ?? '',
+          telefon: userData['telefon'] ?? '',
+          sifre: "",
+          favoritePlaceIds: favList,
+        );
+
+        // Provider'ı güncelle
+        if (mounted) {
+          Provider.of<UserNotifier>(context, listen: false).login(appUser);
+        }
+      }
+    } catch (e) {
+      debugPrint("Veri çekme hatası: $e");
+    } finally {
+      // İşlem bitince bayrağı indir
+      if (mounted) {
+        _isFetching = false;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<fba.User?>(
+      stream: fba.FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // 1. Bağlantı bekleme durumunda (Yükleniyor ekranı)
+        // 1. Bağlantı bekleniyor durumu
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+
+        // 2. Kullanıcı Giriş Yapmış mı?
+        if (snapshot.hasData) {
+          final firebaseUser = snapshot.data!;
+
+          return Consumer<UserNotifier>(
+            builder: (context, userNotifier, child) {
+              // Uygulama hafızasında kullanıcı verisi var mı?
+              if (userNotifier.currentUser != null) {
+                // VARSA -> Ana ekrana git
+                return const MainAppWrapper();
+              } else {
+                // YOKSA -> Veriyi çekmeye başla ve Loading göster
+                // Bu fonksiyon, eğer veri yoksa veritabanına gidip alır.
+                _fetchUserData(firebaseUser.uid);
+
+                return const Scaffold(
+                  body: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 16),
+                        Text("Profil yükleniyor..."),
+                      ],
+                    ),
+                  ),
+                );
+              }
+            },
           );
         }
 
-        // 2. Kullanıcı giriş yapmış mı kontrolü.
-        if (snapshot.hasData && snapshot.data != null) {
-          // Kullanıcı giriş yapmış. Ana ekranı göster.
-          return const MainAppWrapper();
-        }
-
-        // 3. Kullanıcı giriş yapmamış. Giriş ekranını göster.
+        // 3. Giriş Yapılmamışsa -> Giriş Ekranını Göster
         return const GirisEkrani();
       },
     );
