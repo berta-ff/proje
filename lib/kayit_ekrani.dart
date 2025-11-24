@@ -1,3 +1,4 @@
+//kayit_ekrani.dart
 import 'package:flutter/material.dart';
 
 // DÜZELTİLMİŞ YOLLAR

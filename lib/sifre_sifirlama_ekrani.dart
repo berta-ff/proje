@@ -1,3 +1,4 @@
+//sifre_sifirlama_ekrani.dart
 import 'package:flutter/material.dart';
 // 🔥 YENİ EKLE: Firebase Auth paketini prefix ile import et
 import 'package:firebase_auth/firebase_auth.dart' as fba;

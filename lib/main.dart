@@ -1,6 +1,10 @@
+//main.dart
+import 'package:proje/suggest_place_screen.dart'; // Yeni ekranı içe aktar
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async'; // Timer için eklendi
+import 'package:proje/faq_screen.dart'; // Proje adınız farklıysa 'proje' kısmını güncelleyin.
+
 
 // DÜZELTİLMİŞ/EKSİK IMPORT'LAR
 import 'models/user.dart';
@@ -14,6 +18,7 @@ import 'firebase_options.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fba;
 import 'package:flutter/widgets.dart'; // WidgetsFlutterBinding için
 import 'sifre_sifirlama_ekrani.dart';
+import 'package:proje/suggest_place_screen.dart'; // Yeni ekranı içe aktar
 
 // Açık Mavi/Beyaz Tema Renkleri (BU KODLAR IMPORT'LARDAN SONRA GELMELİ)
 const Color accentColor = Colors.lightBlue;
@@ -340,8 +345,15 @@ class _MainAppWrapperState extends State<MainAppWrapper> {
             leading: const Icon(Icons.help_outline),
             title: const Text('Sık Sorulan Sorulanlar'),
             onTap: () {
+              // 1. Önce menüyü kapatıyoruz
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sık Sorulanlar Sayfasına Yönlendiriliyor...')));
+
+              // 2. Yeni SSS ekranına geçiş yapıyoruz
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) =>  FaqScreen(),
+                ),
+              );
             },
           ),
           ListTile(
@@ -352,6 +364,24 @@ class _MainAppWrapperState extends State<MainAppWrapper> {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Destek Hattı Çağrısı Başlatılıyor...')));
             },
           ),
+          // Destek Hattı ListTile'ından sonra ekleyin
+
+// Yeni "Yer Öner" Listesi
+          ListTile(
+            leading: const Icon(Icons.add_location), // Yer Öner için ikon
+            title: const Text('Yer Öner'),
+            onTap: () {
+              Navigator.of(context).pop(); // Menüyü kapat
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const SuggestPlaceScreen(), // Yeni ekranımız
+                ),
+              );
+            },
+          ),
+          const Divider(), // İsteğe bağlı olarak ayırıcı ekleyebilirsiniz.
+
+// ... Buradan sonra "Ayarlar" ve "Çıkış Yap" List Tile'ları devam etmelidir.
           const Divider(),
           const Spacer(),
           ListTile(
