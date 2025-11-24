@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "673486542066",
-    "project_id": "proje-62d4c",
-    "storage_bucket": "proje-62d4c.firebasestorage.app"
+    "project_number": "1029279907270",
+    "project_id": "nerdenevar-ef803",
+    "storage_bucket": "nerdenevar-ef803.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:673486542066:android:b0bd1f0bd5bb74eac66c6b",
+        "mobilesdk_app_id": "1:1029279907270:android:88503af42c2e128a2646c7",
         "android_client_info": {
           "package_name": "com.example.proje"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBU7P1Tux_WewG9ko9_25FAWSFdweX7eb8"
+          "current_key": "AIzaSyCCrJP8GZ2mcnxozfY5wIudZdpvMlVHReI"
         }
       ],
       "services": {
