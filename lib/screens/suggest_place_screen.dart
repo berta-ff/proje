@@ -1,9 +1,11 @@
 import 'dart:io';
-import 'package:image_picker/image_picker.dart';
+import 'dart:typed_data'; // Web için gerekli
+import 'package:flutter/foundation.dart'; // kIsWeb için gerekli
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Firebase için
+import 'package:firebase_storage/firebase_storage.dart'; // Storage için
+
 class SuggestPlaceScreen extends StatefulWidget {
   const SuggestPlaceScreen({super.key});
 
@@ -13,17 +15,19 @@ class SuggestPlaceScreen extends StatefulWidget {
 
 class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
   // --- Form Verileri ---
-  String? _selectedCity = 'Ankara'; // Varsayılan şehir
+  String? _selectedCity = 'Ankara';
   String? _selectedDistrict;
   String? _selectedNeighbourhood;
   String? _selectedCategory;
-  String? _addressDetails;
-  String? _placeName;
-  String? _placeDescription;
+  String? _placeAddressNote; // Adres notu
   final _formKey = GlobalKey<FormState>();
 
-  XFile? _selectedImage;
-  final ImagePicker _picker= ImagePicker();
+  // --- Resim Değişkenleri ---
+  File? _selectedImage;    // Mobilde dosya yolu
+  Uint8List? _webImage;    // Webde resim verisi (bytes)
+  final ImagePicker _picker = ImagePicker();
+
+  bool _isSubmitting = false; // Loading durumu
 
   // --- Dropdown Verileri ---
   final List<String> _categories = ['Yemek', 'Gezilecek Yerler', 'Alışveriş', 'Eğlence Yerleri'];
@@ -36,97 +40,77 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     'Etimesgut':['Çarşı','Elvankent','Eryaman','Güvercinlik', ],
   };
 
-
-  void _submitSuggestion() async { // Metodu 'async' yaptık!
+  // --- Metotlar ---
+  void _submitSuggestion() async {
     if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
+      setState(() => _isSubmitting = true);
 
-      // Loading göstergesi
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Öneri Gönderiliyor, Lütfen Bekleyin...')),
-      );
+      // Veritabanına gönderilecek veri
+      final suggestionData = {
+        'city': _selectedCity,
+        'district': _selectedDistrict,
+        'neighbourhood': _selectedNeighbourhood,
+        'category': _selectedCategory,
+        'address_note': _placeAddressNote,
+        'has_image': (_selectedImage != null || _webImage != null),
+        'timestamp': FieldValue.serverTimestamp(),
+      };
 
       try {
-        await _uploadFileAndSaveData(); // 2. Adımda oluşturduğumuz metodu çağır
+        await FirebaseFirestore.instance.collection('place_suggestions').add(suggestionData);
 
-        // Başarılı olursa eski Snackbar'ı kapat ve yeni başarılı mesajı göster.
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Öneri Başarıyla Gönderildi!')),
+          const SnackBar(content: Text('Öneriniz başarıyla kaydedildi!')),
         );
-
-        // Ekrandan Geri Dön
         Navigator.of(context).pop();
 
-      } catch (error) {
-        // Hata durumunda kullanıcıya hata mesajını göster
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ Gönderim Hatası: ${error.toString()}')),
-        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hata: $e')));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
       }
     }
   }
 
-  Future<void> _uploadFileAndSaveData() async {
-    // 1. Kullanıcıdan UID alınması (zorunlu, Firebase Auth'a bağlı)
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      // Kullanıcı oturum açmadıysa hata ver
-      throw Exception("Oturum açmış bir kullanıcı bulunamadı.");
-    }
-    final userId = user.uid;
-    String? imageUrl;
-
-    // 2. Fotoğraf Yükleme (Sadece fotoğraf seçilmişse)
-    if (_selectedImage != null) {
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('place_images') // Ana klasör adı
-          .child('${DateTime.now().millisecondsSinceEpoch}_${_selectedImage!.name}'); // Benzersiz dosya adı
-
-      // XFile'dan Byte dizisi alıp yükleme
-      await storageRef.putData(await _selectedImage!.readAsBytes());
-
-      // Yükleme tamamlandı, şimdi URL'yi al
-      imageUrl = await storageRef.getDownloadURL();
-    }
-
-    // 3. Firestore'a Kaydedilecek Veri Haritası
-    final placeData = {
-      'placeName': _placeName ?? 'İsimsiz Mekan', // Mekan adı eklenince değişecek
-      'category': _selectedCategory,
-      'city': _selectedCity,
-      'district': _selectedDistrict,
-      'neighbourhood': _selectedNeighbourhood,
-      'addressDetails': _addressDetails ?? '',
-      'description': _placeDescription ?? '', // Açıklama eklenince değişecek
-      'imageUrl': imageUrl, // Yüklenen fotoğrafın URL'si
-      'suggestedBy': userId, // Kimin önerdiği
-      'timestamp': FieldValue.serverTimestamp(), // Kayıt zamanı
-    };
-
-    // 4. Firestore'a Kaydetme
-    await FirebaseFirestore.instance.collection('suggestions').add(placeData);
-  }
-
-
+  // 🔥 RESİM SEÇME METODU (WEB ve MOBİL UYUMLU)
   void _pickImage() async {
-    final XFile? pickedFile = await _picker.pickImage(
-      source: ImageSource.gallery, // İlk olarak galeriyi açar.
-      imageQuality: 50, // İsteğe bağlı: Dosya boyutunu küçültmek için kalite ayarı
-    );
-
-    if (pickedFile != null) {
-      setState(() {
-        // Seçilen fotoğrafı File tipinde değişkene atarız.
-        _selectedImage = pickedFile;
-      });
-    } else {
-      // Kullanıcı fotoğraf seçmeden geri döndüyse
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fotoğraf seçilmedi.')),
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 50,
       );
+
+      // 1. KONTROL: Resim seçilirken kullanıcı ekranı kapattı mı?
+      if (!mounted) return;
+
+      if (pickedFile != null) {
+        if (kIsWeb) {
+          // Web ise: Resmi 'byte' olarak oku
+          var f = await pickedFile.readAsBytes();
+
+          // 2. KONTROL: Okuma işlemi bittiğinde ekran hala açık mı?
+          if (!mounted) return;
+
+          setState(() {
+            _webImage = f;
+            _selectedImage = File('a'); // Form kontrolü için sahte dosya
+          });
+        } else {
+          // Mobil ise: Normal dosya yolunu al
+          setState(() {
+            _selectedImage = File(pickedFile.path);
+          });
+        }
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Fotoğraf seçilmedi.')),
+        );
+      }
+    } catch (e) {
+      debugPrint("Hata: $e");
     }
   }
 
@@ -149,23 +133,16 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
               ),
               const SizedBox(height: 10),
 
-              _buildDropdownField(
-                'Şehir (Sabit)',
-                null,
-                ['Ankara'],
-                _selectedCity,
-                    (newValue) {},
-                isEnabled: false,
-              ),
+              _buildDropdownField('Şehir (Sabit)', null, ['Ankara'], _selectedCity, (v){}, isEnabled: false),
 
               _buildDropdownField(
                 'İlçe Seçin *',
                 'Lütfen bir ilçe seçin.',
                 _districtsAndNeighbourhoods.keys.toList(),
                 _selectedDistrict,
-                    (String? newValue) {
+                    (val) {
                   setState(() {
-                    _selectedDistrict = newValue;
+                    _selectedDistrict = val;
                     _selectedNeighbourhood = null;
                   });
                 },
@@ -177,13 +154,18 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                   'Lütfen bir mahalle seçin.',
                   _districtsAndNeighbourhoods[_selectedDistrict]!,
                   _selectedNeighbourhood,
-                      (String? newValue) {
-                    setState(() {
-                      _selectedNeighbourhood = newValue;
-                    });
-                  },
+                      (val) => setState(() => _selectedNeighbourhood = val),
                 ),
 
+              const SizedBox(height: 10),
+              TextFormField(
+                decoration: const InputDecoration(
+                  labelText: 'Açık Adres Tarifi',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+                onChanged: (val) => _placeAddressNote = val,
+              ),
 
               const Divider(height: 30),
 
@@ -198,26 +180,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                 'Lütfen bir kategori seçin.',
                 _categories,
                 _selectedCategory,
-                    (String? newValue) {
-                  setState(() {
-                    _selectedCategory = newValue;
-                  });
-                },
-              ),
-              const SizedBox(height: 15),
-
-              TextFormField(
-                decoration: const InputDecoration(
-                  labelText: 'Açık Adres / Detaylı Tarif',
-                  hintText: 'Örn: Ana Cadde 5/A, Parkın yanı, caminin karşısı.',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                ),
-                maxLines: 3, // Birden fazla satır yazılabilir
-                keyboardType: TextInputType.multiline,
-                onSaved: (value) {
-                  _addressDetails = value; // 1. Adımda tanımladığımız değişkene kaydediyoruz
-                },
+                    (val) => setState(() => _selectedCategory = val),
               ),
 
               const Divider(height: 30),
@@ -228,38 +191,29 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
               ),
               const SizedBox(height: 10),
 
-              // Seçilen fotoğraf varsa, onu göster (YENİ KOD BAŞLANGICI)
-              // Seçilen fotoğraf varsa, onu göster (YENİ KOD BLOĞU)
-              if (_selectedImage != null)
+              // 🔥 RESİM GÖSTERME ALANI (WEB ve MOBİL UYUMLU)
+              if (_selectedImage != null || _webImage != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10.0),
-                  child: Image.network(
-                    _selectedImage!.path, // Web'de bu, tarayıcının geçici dosya URL'sidir.
-                    height: 200,
-                    fit: BoxFit.cover,
-                    // Eğer Flutter Web kullanıyorsanız ve XFile.path direkt çalışmazsa,
-                    // bu Image.network kullanımı genellikle image_picker'ın Web tarafı implementasyonu sayesinde çalışır.
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: kIsWeb
+                        ? Image.memory(_webImage!, height: 200, fit: BoxFit.cover)
+                        : Image.file(_selectedImage!, height: 200, fit: BoxFit.cover),
                   ),
                 ),
 
-              // Fotoğraf seçme/değiştirme butonu
               ElevatedButton.icon(
                 onPressed: _pickImage,
-                // Fotoğraf seçilmişse "değiştir" ikonunu göster, yoksa "kamera" ikonunu.
-                icon: Icon(_selectedImage != null ? Icons.change_circle : Icons.camera_alt),
-                // Butonun yazısını da duruma göre değiştir.
-                label: Text(_selectedImage != null ? 'Fotoğrafı Değiştir' : 'Fotoğraf Seç / Çek'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 15),
-                  // Seçili fotoğraf varsa rengini değiştir.
-                  backgroundColor: _selectedImage != null ? Colors.blue.shade100 : Colors.grey.shade300,
-                  foregroundColor: Colors.black87,
-                ),
-              ), // (YENİ KOD BİTİŞİ)
+                icon: Icon((_selectedImage != null || _webImage != null) ? Icons.change_circle : Icons.camera_alt),
+                label: Text((_selectedImage != null || _webImage != null) ? 'Fotoğrafı Değiştir' : 'Fotoğraf Seç / Çek'),
+              ),
 
               const SizedBox(height: 30),
 
-              ElevatedButton(
+              _isSubmitting
+                  ? const Center(child: CircularProgressIndicator())
+                  : ElevatedButton(
                 onPressed: _submitSuggestion,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue.shade700,
