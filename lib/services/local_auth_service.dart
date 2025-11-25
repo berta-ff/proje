@@ -1,8 +1,6 @@
-// lib/services/local_auth_service.dart
-
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/user.dart'; // User modelini import et
+import '../models/user.dart'; // User modelini buradan import ediyor
 
 class LocalAuthService {
   static const _keyUsers = 'registeredUsers';
@@ -31,7 +29,7 @@ class LocalAuthService {
   Future<bool> registerUser(User newUser) async {
     final users = await _loadUsers();
 
-    // E-posta (username) zaten kayıtlı mı kontrol et
+    // E-posta zaten kayıtlı mı kontrol et
     if (users.any((user) => user.email == newUser.email)) {
       return false; // E-posta zaten kayıtlı
     }
@@ -54,28 +52,24 @@ class LocalAuthService {
     }
   }
 
-  // GÜNCELLENDİ: Kullanıcı profil bilgilerini günceller
+  // Kullanıcı profil bilgilerini günceller
   Future<bool> updateUser({
-    required User oldUser, // Eski kullanıcı nesnesi
-    required User newUser, // Yeni kullanıcı nesnesi
+    required User oldUser,
+    required User newUser,
   }) async {
     final users = await _loadUsers();
 
-    // Eski e-posta adresi ile kullanıcıyı bul
     final int index = users.indexWhere((user) => user.email == oldUser.email);
 
     if (index == -1) {
-      return false; // Kullanıcı bulunamadı
+      return false;
     }
 
-    // Yeni e-posta adresi farklı ve zaten kayıtlıysa hata ver
     if (oldUser.email != newUser.email && users.any((user) => user.email == newUser.email)) {
-      return false; // Yeni e-posta zaten kullanımda
+      return false;
     }
 
-    // Listede güncel kullanıcıyı eski yerine koy
     users[index] = newUser;
-
     await _saveUsers(users);
     return true;
   }
@@ -83,55 +77,45 @@ class LocalAuthService {
   // Kullanıcının favori listesini günceller
   Future<bool> updateUserFavorites(User oldUser, List<int> newFavorites) async {
     final users = await _loadUsers();
-
-    // Kullanıcının indeksi
     final int index = users.indexWhere((user) => user.email == oldUser.email);
 
     if (index == -1) {
-      return false; // Kullanıcı bulunamadı
+      return false;
     }
 
-    // Yeni favori listesi ile yeni User nesnesi oluştur
     final updatedUser = User(
       email: oldUser.email,
       sifre: oldUser.sifre,
       isimSoyisim: oldUser.isimSoyisim,
       kullaniciAdi: oldUser.kullaniciAdi,
       telefon: oldUser.telefon,
-      favoritePlaceIds: newFavorites, // YENİ FAVORİ LİSTESİ
+      favoritePlaceIds: newFavorites,
     );
 
-    // Listede güncel kullanıcıyı eski yerine koy
     users[index] = updatedUser;
-
     await _saveUsers(users);
-    return true; // Favoriler başarıyla güncellendi
+    return true;
   }
 
   // Kullanıcının şifresini günceller
   Future<bool> updateUserPassword(User oldUser, String newSifre) async {
     final users = await _loadUsers();
-
-    // Kullanıcının indeksi
     final int index = users.indexWhere((user) => user.email == oldUser.email);
 
     if (index == -1) {
-      return false; // Kullanıcı bulunamadı
+      return false;
     }
 
-    // Yeni şifre ile yeni User nesnesi oluştur
     final updatedUser = User(
       email: oldUser.email,
-      sifre: newSifre, // Yeni şifre
+      sifre: newSifre,
       isimSoyisim: oldUser.isimSoyisim,
       kullaniciAdi: oldUser.kullaniciAdi,
       telefon: oldUser.telefon,
       favoritePlaceIds: oldUser.favoritePlaceIds,
     );
 
-    // Listede güncel kullanıcıyı eski yerine koy
     users[index] = updatedUser;
-
     await _saveUsers(users);
     return true;
   }
