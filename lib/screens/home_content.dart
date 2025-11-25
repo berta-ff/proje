@@ -72,7 +72,7 @@ class HomeContent extends StatelessWidget {
         child: Padding(
 
 
-          padding: const EdgeInsets.symmetric(vertical: 80.0, horizontal: 10.0),
+          padding: const EdgeInsets.symmetric(vertical: 100.0, horizontal: 10.0),
           child: Row(
             children: [
               Icon(icon, size: 25, color: accentColor),

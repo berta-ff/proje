@@ -1,13 +1,18 @@
+// lib/screens/giris_ekrani.dart (VEYA lib/giris_ekrani.dart - Dosya yolun hangisiyse)
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fba;
+import 'package:cloud_firestore/cloud_firestore.dart'; // Firestore eklendi
 
-// 🔥 ÖNEMLİ: UserNotifier artık providers klasöründe
+// DİKKAT: UserNotifier ve Model importlarını kendi dosya yoluna göre ayarla
+// Eğer providers klasöründeyse:
 import 'providers/user_provider.dart';
+// Eğer modeller models klasöründeyse:
+import 'models/user.dart';
 
-// Ekranlar
-import 'kayit_ekrani.dart'; // Bu dosya lib/ klasöründe olduğu için doğrudan çağrılır
-import 'screens/sifre_sifirlama_ekrani.dart'; // Bu dosya lib/screens/ klasöründe OLMALIDIR
+// Ana dizindeki dosyalar (Eğer oradaysa)
+import 'kayit_ekrani.dart';
 
 class GirisEkrani extends StatefulWidget {
   const GirisEkrani({super.key});
@@ -20,6 +25,9 @@ class _GirisEkraniState extends State<GirisEkrani> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  // 🔥 TEK DEĞİŞİKLİK BURASI: Loading'i kontrol eden değişken
+  bool _isLoading = false;
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -28,6 +36,7 @@ class _GirisEkraniState extends State<GirisEkrani> {
   }
 
   void _gosterSnackBar(String mesaj, {required bool isError}) {
+    if (!mounted) return;
     final themeColor = Theme.of(context).colorScheme.secondary;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -39,7 +48,6 @@ class _GirisEkraniState extends State<GirisEkrani> {
   }
 
   void _sifremiUnuttum() {
-    // Şifre sıfırlama ekranına yönlendirme
     Navigator.pushNamed(context, '/sifre_sifirlama');
   }
 
@@ -47,6 +55,7 @@ class _GirisEkraniState extends State<GirisEkrani> {
     Navigator.pushNamed(context, '/kayit');
   }
 
+  // --- GİRİŞ MANTIĞI (GÜNCELLENDİ) ---
   void _handleLogin() async {
     final String email = _emailController.text.trim();
     final String password = _passwordController.text;
@@ -56,30 +65,70 @@ class _GirisEkraniState extends State<GirisEkrani> {
       return;
     }
 
-    showDialog(
-      context: context,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-      barrierDismissible: false,
-    );
+    // 1. Loading'i Başlat (Ekrana showDialog yerine değişken ile müdahale ediyoruz)
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
-      await fba.FirebaseAuth.instance.signInWithEmailAndPassword(
+      // 2. Firebase Auth Girişi
+      fba.UserCredential userCredential = await fba.FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
 
+      // 3. Firestore'dan Veri Çekme
+      String uid = userCredential.user!.uid;
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+      User loggedInUser;
+
+      if (userDoc.exists) {
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+        List<dynamic> favListDyn = userData['favoritePlaceIds'] ?? [];
+        List<int> favList = favListDyn.map((e) => int.parse(e.toString())).toList();
+
+        loggedInUser = User(
+          isimSoyisim: userData['isimSoyisim'] ?? '',
+          kullaniciAdi: userData['kullaniciAdi'] ?? '',
+          email: userData['email'] ?? email,
+          telefon: userData['telefon'] ?? '',
+          sifre: "",
+          favoritePlaceIds: favList,
+        );
+      } else {
+        // Kullanıcı verisi yoksa oluştur (Yedek Plan)
+        loggedInUser = User(
+          isimSoyisim: "Kullanıcı",
+          kullaniciAdi: email.split('@')[0],
+          email: email,
+          telefon: "",
+          sifre: "",
+          favoritePlaceIds: [],
+        );
+
+        await FirebaseFirestore.instance.collection('users').doc(uid).set({
+          'isimSoyisim': loggedInUser.isimSoyisim,
+          'kullaniciAdi': loggedInUser.kullaniciAdi,
+          'email': loggedInUser.email,
+          'telefon': loggedInUser.telefon,
+          'favoritePlaceIds': [],
+        });
+      }
+
       if (!mounted) return;
-      Navigator.pop(context); // Loading kapat
 
-      _gosterSnackBar('Giriş Başarılı! Yönlendiriliyorsunuz.', isError: false);
+      // 4. Provider Güncelle ve Yönlendir
+      Provider.of<UserNotifier>(context, listen: false).login(loggedInUser);
 
-      // Main.dart'taki StreamBuilder zaten yönlendirmeyi yapacak.
+      _gosterSnackBar('Giriş Başarılı!', isError: false);
+
+      // Ana Ekrana Git
+      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
 
     } on fba.FirebaseAuthException catch (e) {
       if (!mounted) return;
-      Navigator.pop(context);
       String hataMesaji = 'Giriş başarısız oldu.';
-
       if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential') {
         hataMesaji = 'Girdiğiniz e-posta veya şifre hatalı.';
       } else if (e.code == 'invalid-email') {
@@ -87,18 +136,19 @@ class _GirisEkraniState extends State<GirisEkrani> {
       } else {
         hataMesaji = 'Hata: ${e.message}';
       }
-
       _gosterSnackBar(hataMesaji, isError: true);
+
+      // Hata olduğunda loading'i kapat
+      setState(() => _isLoading = false);
+
     } catch (e) {
       if (!mounted) return;
-      Navigator.pop(context);
       _gosterSnackBar('Beklenmedik bir hata oluştu: $e', isError: true);
+      setState(() => _isLoading = false);
     }
   }
 
-  // Misafir Girişi
   void _guestLogin() {
-    // UserNotifier provider üzerinden çağrılıyor
     Provider.of<UserNotifier>(context, listen: false).guestLogin();
     Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
   }
@@ -109,8 +159,10 @@ class _GirisEkraniState extends State<GirisEkrani> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Giriş Ekranı')),
+      // Stack yapısını koruduk, sadece en sona Loading katmanı ekledik
       body: Stack(
         children: [
+          // 1. KATMAN: ARKA PLAN RESMİ (Senin Orijinal Kodun)
           Positioned.fill(
             child: Opacity(
               opacity: 0.9,
@@ -119,6 +171,8 @@ class _GirisEkraniState extends State<GirisEkrani> {
               ),
             ),
           ),
+
+          // 2. KATMAN: İÇERİK (Senin Orijinal Kodun)
           Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(30.0),
@@ -175,13 +229,16 @@ class _GirisEkraniState extends State<GirisEkrani> {
                     ),
                   ),
                   const SizedBox(height: 10),
+
+                  // Buton (Loading varsa devre dışı kalır)
                   ElevatedButton(
-                    onPressed: _handleLogin,
+                    onPressed: _isLoading ? null : _handleLogin,
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [Icon(Icons.login), SizedBox(width: 10), Text('Giriş Yap')],
                     ),
                   ),
+
                   const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -201,6 +258,15 @@ class _GirisEkraniState extends State<GirisEkrani> {
               ),
             ),
           ),
+
+          // 3. KATMAN: YENİ LOADING PERDESİ (Tasarımı bozmaz, sadece üstüne gelir)
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.5),
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            ),
         ],
       ),
     );
