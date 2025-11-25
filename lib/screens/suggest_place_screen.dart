@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 class SuggestPlaceScreen extends StatefulWidget {
   const SuggestPlaceScreen({super.key});
 
@@ -15,9 +17,12 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
   String? _selectedDistrict;
   String? _selectedNeighbourhood;
   String? _selectedCategory;
+  String? _addressDetails;
+  String? _placeName;
+  String? _placeDescription;
   final _formKey = GlobalKey<FormState>();
 
-  File? _selectedImage;
+  XFile? _selectedImage;
   final ImagePicker _picker= ImagePicker();
 
   // --- Dropdown Verileri ---
@@ -31,19 +36,80 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     'Etimesgut':['Çarşı','Elvankent','Eryaman','Güvercinlik', ],
   };
 
-  // --- Metotlar ---
-  void _submitSuggestion() {
+
+  void _submitSuggestion() async { // Metodu 'async' yaptık!
     if (_formKey.currentState!.validate()) {
-      if(_selectedImage !=null){
-        print('Yüklenecek Fotoğraf Yolu: ${_selectedImage!.path}');
-      }
+      _formKey.currentState!.save();
+
+      // Loading göstergesi
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Öneriniz başarıyla alındı: $_selectedCity, $_selectedDistrict, $_selectedCategory')),
+        SnackBar(content: Text('Öneri Gönderiliyor, Lütfen Bekleyin...')),
       );
-      // TODO: Burada gerçek Firebase/API gönderim kodunu ekleyeceksiniz.
-      Navigator.of(context).pop();
+
+      try {
+        await _uploadFileAndSaveData(); // 2. Adımda oluşturduğumuz metodu çağır
+
+        // Başarılı olursa eski Snackbar'ı kapat ve yeni başarılı mesajı göster.
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Öneri Başarıyla Gönderildi!')),
+        );
+
+        // Ekrandan Geri Dön
+        Navigator.of(context).pop();
+
+      } catch (error) {
+        // Hata durumunda kullanıcıya hata mesajını göster
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Gönderim Hatası: ${error.toString()}')),
+        );
+      }
     }
   }
+
+  Future<void> _uploadFileAndSaveData() async {
+    // 1. Kullanıcıdan UID alınması (zorunlu, Firebase Auth'a bağlı)
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      // Kullanıcı oturum açmadıysa hata ver
+      throw Exception("Oturum açmış bir kullanıcı bulunamadı.");
+    }
+    final userId = user.uid;
+    String? imageUrl;
+
+    // 2. Fotoğraf Yükleme (Sadece fotoğraf seçilmişse)
+    if (_selectedImage != null) {
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('place_images') // Ana klasör adı
+          .child('${DateTime.now().millisecondsSinceEpoch}_${_selectedImage!.name}'); // Benzersiz dosya adı
+
+      // XFile'dan Byte dizisi alıp yükleme
+      await storageRef.putData(await _selectedImage!.readAsBytes());
+
+      // Yükleme tamamlandı, şimdi URL'yi al
+      imageUrl = await storageRef.getDownloadURL();
+    }
+
+    // 3. Firestore'a Kaydedilecek Veri Haritası
+    final placeData = {
+      'placeName': _placeName ?? 'İsimsiz Mekan', // Mekan adı eklenince değişecek
+      'category': _selectedCategory,
+      'city': _selectedCity,
+      'district': _selectedDistrict,
+      'neighbourhood': _selectedNeighbourhood,
+      'addressDetails': _addressDetails ?? '',
+      'description': _placeDescription ?? '', // Açıklama eklenince değişecek
+      'imageUrl': imageUrl, // Yüklenen fotoğrafın URL'si
+      'suggestedBy': userId, // Kimin önerdiği
+      'timestamp': FieldValue.serverTimestamp(), // Kayıt zamanı
+    };
+
+    // 4. Firestore'a Kaydetme
+    await FirebaseFirestore.instance.collection('suggestions').add(placeData);
+  }
+
 
   void _pickImage() async {
     final XFile? pickedFile = await _picker.pickImage(
@@ -54,7 +120,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     if (pickedFile != null) {
       setState(() {
         // Seçilen fotoğrafı File tipinde değişkene atarız.
-        _selectedImage = File(pickedFile.path);
+        _selectedImage = pickedFile;
       });
     } else {
       // Kullanıcı fotoğraf seçmeden geri döndüyse
@@ -118,6 +184,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                   },
                 ),
 
+
               const Divider(height: 30),
 
               const Text(
@@ -137,6 +204,21 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                   });
                 },
               ),
+              const SizedBox(height: 15),
+
+              TextFormField(
+                decoration: const InputDecoration(
+                  labelText: 'Açık Adres / Detaylı Tarif',
+                  hintText: 'Örn: Ana Cadde 5/A, Parkın yanı, caminin karşısı.',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                maxLines: 3, // Birden fazla satır yazılabilir
+                keyboardType: TextInputType.multiline,
+                onSaved: (value) {
+                  _addressDetails = value; // 1. Adımda tanımladığımız değişkene kaydediyoruz
+                },
+              ),
 
               const Divider(height: 30),
 
@@ -147,13 +229,16 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
               const SizedBox(height: 10),
 
               // Seçilen fotoğraf varsa, onu göster (YENİ KOD BAŞLANGICI)
+              // Seçilen fotoğraf varsa, onu göster (YENİ KOD BLOĞU)
               if (_selectedImage != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10.0),
-                  child: Image.file(
-                    _selectedImage!,
+                  child: Image.network(
+                    _selectedImage!.path, // Web'de bu, tarayıcının geçici dosya URL'sidir.
                     height: 200,
                     fit: BoxFit.cover,
+                    // Eğer Flutter Web kullanıyorsanız ve XFile.path direkt çalışmazsa,
+                    // bu Image.network kullanımı genellikle image_picker'ın Web tarafı implementasyonu sayesinde çalışır.
                   ),
                 ),
 
