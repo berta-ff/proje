@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 
 class SuggestPlaceScreen extends StatefulWidget {
@@ -15,12 +17,16 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
   String? _selectedCategory;
   final _formKey = GlobalKey<FormState>();
 
+  File? _selectedImage;
+  final ImagePicker _picker= ImagePicker();
+
   // --- Dropdown Verileri ---
   final List<String> _categories = ['Yemek', 'Gezilecek Yerler', 'Alışveriş', 'Eğlence Yerleri'];
 
   final Map<String, List<String>> _districtsAndNeighbourhoods = {
     'Çankaya': ['Anıttepe','Ayrancı', 'Bahçelievler','Balgat','Bilkent/Bilkentplaza/Beytepe', 'Cebeci','Çayyolu/Ümitköy', 'Dikmen','Kızılay', 'ODTÜ','Sıhhiye','Kurtuluş','Tunalı Hilmi', ],
     'Keçiören': ['Aktepe', 'Bağlum','Esertepe','Etlik','Merkez','Sanatoryum','Ufuktepe'],
+    'Kahramanakazan':['Kazan'],
     'Yenimahalle': ['Atatürk Orman Çiftliği','Batıkent','Demetevler','İstasyon','Karşıyaka','Ostim','Susuz','Şentepe','Yenimahalle'],
     'Etimesgut':['Çarşı','Elvankent','Eryaman','Güvercinlik', ],
   };
@@ -28,6 +34,9 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
   // --- Metotlar ---
   void _submitSuggestion() {
     if (_formKey.currentState!.validate()) {
+      if(_selectedImage !=null){
+        print('Yüklenecek Fotoğraf Yolu: ${_selectedImage!.path}');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Öneriniz başarıyla alındı: $_selectedCity, $_selectedDistrict, $_selectedCategory')),
       );
@@ -36,10 +45,23 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     }
   }
 
-  void _pickImage() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Fotoğraf seçme arayüzü açılacak...')),
+  void _pickImage() async {
+    final XFile? pickedFile = await _picker.pickImage(
+      source: ImageSource.gallery, // İlk olarak galeriyi açar.
+      imageQuality: 50, // İsteğe bağlı: Dosya boyutunu küçültmek için kalite ayarı
     );
+
+    if (pickedFile != null) {
+      setState(() {
+        // Seçilen fotoğrafı File tipinde değişkene atarız.
+        _selectedImage = File(pickedFile.path);
+      });
+    } else {
+      // Kullanıcı fotoğraf seçmeden geri döndüyse
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Fotoğraf seçilmedi.')),
+      );
+    }
   }
 
   @override
@@ -124,16 +146,31 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
               ),
               const SizedBox(height: 10),
 
+              // Seçilen fotoğraf varsa, onu göster (YENİ KOD BAŞLANGICI)
+              if (_selectedImage != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10.0),
+                  child: Image.file(
+                    _selectedImage!,
+                    height: 200,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+
+              // Fotoğraf seçme/değiştirme butonu
               ElevatedButton.icon(
                 onPressed: _pickImage,
-                icon: const Icon(Icons.camera_alt),
-                label: const Text('Fotoğraf Seç / Çek'),
+                // Fotoğraf seçilmişse "değiştir" ikonunu göster, yoksa "kamera" ikonunu.
+                icon: Icon(_selectedImage != null ? Icons.change_circle : Icons.camera_alt),
+                // Butonun yazısını da duruma göre değiştir.
+                label: Text(_selectedImage != null ? 'Fotoğrafı Değiştir' : 'Fotoğraf Seç / Çek'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 15),
-                  backgroundColor: Colors.grey.shade300,
+                  // Seçili fotoğraf varsa rengini değiştir.
+                  backgroundColor: _selectedImage != null ? Colors.blue.shade100 : Colors.grey.shade300,
                   foregroundColor: Colors.black87,
                 ),
-              ),
+              ), // (YENİ KOD BİTİŞİ)
 
               const SizedBox(height: 30),
 
