@@ -13,14 +13,12 @@ dependencies:
   shared_preferences: ^2.2.2  # En son sürümü kontrol edip kullanın
   firebase_core: ^2.27.0
   firebase_auth: ^4.17.8
-
   cupertino_icons: ^1.0.8
-
-  # 1. DÜZELTME: Hataları gidermek için provider paketi eklendi.
   provider: ^6.1.2
   cloud_firestore: ^4.17.5
   image_picker: ^1.2.1
   firebase_storage: ^11.7.7
+  google_maps_flutter: ^2.5.0 # Harita için gerekli paket
 
 dev_dependencies:
   flutter_test:

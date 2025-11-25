@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; // Firebase için
 import 'package:firebase_storage/firebase_storage.dart'; // Storage için
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:proje/screens/map_picker_screen.dart';
+
 
 class SuggestPlaceScreen extends StatefulWidget {
   const SuggestPlaceScreen({super.key});
@@ -19,9 +22,11 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
   String? _selectedDistrict;
   String? _selectedNeighbourhood;
   String? _selectedCategory;
-  String? _placeAddressNote; // Adres notu
+  String? _placeAddressNote;
+  String? _placeName;
+  String? _placeDescription;
+  LatLng? _selectedMapLocation;
   final _formKey = GlobalKey<FormState>();
-
   // --- Resim Değişkenleri ---
   File? _selectedImage;    // Mobilde dosya yolu
   Uint8List? _webImage;    // Webde resim verisi (bytes)
@@ -40,24 +45,67 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     'Etimesgut':['Çarşı','Elvankent','Eryaman','Güvercinlik', ],
   };
 
-  // --- Metotlar ---
+  // 🔥 Yeni Metot: Firebase Storage'a fotoğrafı yükler ve URL'sini döndürür.
+  Future<String?> _uploadImage() async {
+    // Ne mobil dosya ne de web verisi yoksa, yüklemeye gerek yok.
+    if (_selectedImage == null && _webImage == null) return null;
+
+    try {
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('place_images')
+          .child('${DateTime.now().millisecondsSinceEpoch}_suggested_image');
+
+      UploadTask uploadTask;
+
+      if (kIsWeb && _webImage != null) {
+        uploadTask = storageRef.putData(_webImage!);
+      } else if (_selectedImage != null && !kIsWeb) {
+        uploadTask = storageRef.putFile(_selectedImage!);
+      } else {
+        return null;
+      }
+
+      final snapshot = await uploadTask.whenComplete(() => null);
+
+      return await snapshot.ref.getDownloadURL();
+
+    } catch (e) {
+      debugPrint("Fotoğraf yükleme hatası: $e");
+      return null;
+    }
+  }
+
+
   void _submitSuggestion() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
+      _formKey.currentState!.save();
 
-      // Veritabanına gönderilecek veri
+      // İsteğe bağlı: Fotoğrafı yükle ve URL'yi al
+      final imageUrl = await _uploadImage();
+
       final suggestionData = {
+        'placeName':_placeName ??'',
+        'description': _placeDescription ?? '',
         'city': _selectedCity,
         'district': _selectedDistrict,
         'neighbourhood': _selectedNeighbourhood,
         'category': _selectedCategory,
         'address_note': _placeAddressNote,
         'has_image': (_selectedImage != null || _webImage != null),
+        if (imageUrl != null) 'imageUrl': imageUrl, // URL varsa ekle
         'timestamp': FieldValue.serverTimestamp(),
+
+        if (_selectedMapLocation != null)
+          'latitude': _selectedMapLocation!.latitude,
+        if (_selectedMapLocation != null)
+          'longitude': _selectedMapLocation!.longitude,
+        'has_precise_location': _selectedMapLocation != null,
       };
 
       try {
-        await FirebaseFirestore.instance.collection('place_suggestions').add(suggestionData);
+        await FirebaseFirestore.instance.collection('suggestions').add(suggestionData);
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -82,15 +130,12 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
         imageQuality: 50,
       );
 
-      // 1. KONTROL: Resim seçilirken kullanıcı ekranı kapattı mı?
       if (!mounted) return;
 
       if (pickedFile != null) {
         if (kIsWeb) {
-          // Web ise: Resmi 'byte' olarak oku
           var f = await pickedFile.readAsBytes();
 
-          // 2. KONTROL: Okuma işlemi bittiğinde ekran hala açık mı?
           if (!mounted) return;
 
           setState(() {
@@ -98,7 +143,6 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
             _selectedImage = File('a'); // Form kontrolü için sahte dosya
           });
         } else {
-          // Mobil ise: Normal dosya yolunu al
           setState(() {
             _selectedImage = File(pickedFile.path);
           });
@@ -114,6 +158,31 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     }
   }
 
+  // 🔥 Harita Seçim Ekranını açma metodu
+  void _openMapPicker() async {
+    final pickedLocation = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        builder: (ctx) => MapPickerScreen(
+          initialLocation: _selectedMapLocation ?? const LatLng(39.9255, 32.8596),
+        ),
+      ),
+    );
+
+    if (pickedLocation != null) {
+      setState(() {
+        _selectedMapLocation = pickedLocation;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Konum başarıyla seçildi!'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,6 +196,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
+              // --- 1. KONUM BİLGİLERİ ---
               const Text(
                 'Konum Bilgileri (Zorunlu)',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue),
@@ -156,8 +226,27 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                   _selectedNeighbourhood,
                       (val) => setState(() => _selectedNeighbourhood = val),
                 ),
+              const SizedBox(height: 15),
 
-              const SizedBox(height: 10),
+              TextFormField(
+                decoration: const InputDecoration(
+                  labelText: 'Mekan Adı *',
+                  hintText: 'Örn: Tunalı Pastanesi',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Lütfen mekanın adını girin.';
+                  }
+                  return null;
+                },
+                onSaved: (value) {
+                  _placeName = value;
+                },
+              ),
+
+              const SizedBox(height: 15),
+
               TextFormField(
                 decoration: const InputDecoration(
                   labelText: 'Açık Adres Tarifi',
@@ -167,14 +256,19 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                 onChanged: (val) => _placeAddressNote = val,
               ),
 
-              const Divider(height: 30),
+              const Divider(height: 30), // Konum Bilgileri ve Kategori Arası Ayırıcı
 
-              const Text(
-                'Kategori Seçimi (Zorunlu)',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue),
+              // --- 2. KATEGORİ SEÇİMİ (BOŞLUK DÜZELTİLDİ) ---
+              // 🔥 padding: EdgeInsets.only(bottom: 3.0) ile üst ve alt boşluk küçültüldü.
+              const Padding(
+                padding: EdgeInsets.only(bottom: 3.0),
+                child: Text(
+                  'Kategori Seçimi (Zorunlu)',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue),
+                ),
               ),
-              const SizedBox(height: 10),
 
+              // KATEGORİ DROPDOWN ALANI
               _buildDropdownField(
                 'Kategori Seçin *',
                 'Lütfen bir kategori seçin.',
@@ -183,15 +277,50 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
                     (val) => setState(() => _selectedCategory = val),
               ),
 
-              const Divider(height: 30),
+              const SizedBox(height: 25),
 
+              // --- 3. HARİTADA KONUM İŞARETLEME (Kategoriden Sonra) ---
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: Icon(Icons.map, color: _selectedMapLocation == null ? Colors.blue : Colors.white),
+                      label: Text(
+                        _selectedMapLocation == null ? 'Haritada Konumu İşaretle' : 'Konum Seçildi! (Değiştir)',
+                        style: TextStyle(color: _selectedMapLocation == null ? Colors.blue : Colors.white, fontSize: 15),
+                      ),
+                      onPressed: _openMapPicker,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _selectedMapLocation == null ? Colors.blue.shade50 : Colors.blue.shade700,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              // Seçilen konumu kullanıcıya göster
+              if (_selectedMapLocation != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    'Seçilen Koordinat: ${_selectedMapLocation!.latitude.toStringAsFixed(6)}, ${_selectedMapLocation!.longitude.toStringAsFixed(6)}',
+                    style: TextStyle(color: Colors.green.shade700, fontSize: 12),
+                  ),
+                ),
+              const SizedBox(height: 25),
+
+              const Divider(height: 30), // Harita ile Fotoğraf Arası Ayırıcı
+
+              // --- 4. FOTOĞRAF EKLEME ---
               const Text(
                 'Fotoğraf Ekle (İsteğe Bağlı)',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
 
-              // 🔥 RESİM GÖSTERME ALANI (WEB ve MOBİL UYUMLU)
+              // RESİM GÖSTERME ALANI
               if (_selectedImage != null || _webImage != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 10.0),
@@ -211,6 +340,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
 
               const SizedBox(height: 30),
 
+              // --- 5. GÖNDER BUTONU ---
               _isSubmitting
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton(
@@ -232,6 +362,7 @@ class _SuggestPlaceScreenState extends State<SuggestPlaceScreen> {
     );
   }
 
+  // --- Yardımcı Dropdown Metodu ---
   Widget _buildDropdownField(
       String label,
       String? validatorMessage,

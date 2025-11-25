@@ -13,6 +13,7 @@ import 'search_content.dart';
 import 'favorites_content.dart';
 import 'profile_screens.dart';
 
+
 class MainAppWrapper extends StatefulWidget {
   const MainAppWrapper({super.key});
 
@@ -61,6 +62,7 @@ class _MainAppWrapperState extends State<MainAppWrapper> {
               Navigator.of(context).push(MaterialPageRoute(builder: (context) => FaqScreen()));
             },
           ),
+
           ListTile(
             leading: const Icon(Icons.add_location),
             title: const Text('Yer Öner'),
