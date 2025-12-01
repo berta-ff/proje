@@ -7,6 +7,8 @@ import '../models/user.dart';
 class UserNotifier extends ChangeNotifier {
   User? _currentUser;
   User? get currentUser => _currentUser;
+  final List<int> _favoriteIds = [];
+  List<int> get favoriteIds => _favoriteIds;
 
   // Manuel giriş için (Login ekranı çağırır)
   void login(User user) {

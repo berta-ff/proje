@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants.dart';
 
+
 class DataModel {
   // --- MEKANLAR LİSTESİ ---
   static final List<Map<String, dynamic>> items = [
@@ -1276,7 +1277,10 @@ class DataModel {
       SortingType sortingType,
       String subCategoryFilter,
       String subSubCategoryFilter,
+      // 🔥 YENİ PARAMETRE: Artık bu fonksiyon favori ID'leri alacak
+      List<int> favoritePlaceIds,
       ) {
+
     List<Map<String, dynamic>> filteredList = items
         .where((item) => item['category'] == category)
         .where((item) => (item['rating'] as double) >= minRating && (item['rating'] as double) <= maxRating)
@@ -1300,7 +1304,28 @@ class DataModel {
       filteredList.sort((a, b) => (b['rating'] as double).compareTo(a['rating'] as double));
     } else if (sortingType == SortingType.ratingLowToHigh) {
       filteredList.sort((a, b) => (a['rating'] as double).compareTo(b['rating'] as double));
-    }
+    } else if (sortingType == SortingType.favoritesHighToLow) {
+  // 🔥 FAVORİ: Çoktan Aza Sıralama Mantığı
+  filteredList.sort((a, b) {
+  final bool aIsFav = favoritePlaceIds.contains(a['id']);
+  final bool bIsFav = favoritePlaceIds.contains(b['id']);
+  // Favori olanlara 1, olmayana 0 puanı vererek, büyükten küçüğe sırala (Favoriler üstte).
+  final int scoreA = aIsFav ? 1 : 0;
+  final int scoreB = bIsFav ? 1 : 0;
+  return scoreB.compareTo(scoreA);
+  });
+
+  } else if (sortingType == SortingType.favoritesLowToHigh) {
+  // 🔥 FAVORİ: Azdan Çoğa Sıralama Mantığı
+  filteredList.sort((a, b) {
+  final bool aIsFav = favoritePlaceIds.contains(a['id']);
+  final bool bIsFav = favoritePlaceIds.contains(b['id']);
+  // Favori olmayanlar 0, favoriler 1. Küçükten büyüğe sırala (Favori olmayanlar üstte).
+  final int scoreA = aIsFav ? 1 : 0;
+  final int scoreB = bIsFav ? 1 : 0;
+  return scoreA.compareTo(scoreB);
+  });
+  }
     return filteredList;
   }
 }

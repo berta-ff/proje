@@ -4,6 +4,8 @@ import '../constants.dart';
 import '../models/data_model.dart';
 import '../providers/user_provider.dart';
 
+
+
 // --- İKON SEÇİCİ YARDIMCI FONKSİYON ---
 // String isme bakıp uygun ikonu verir. Veri dosyasını kirletmeden ikon ekleriz.
 IconData _getCategoryIcon(String name) {
@@ -220,6 +222,25 @@ class _CategoryListScreenState extends State<CategoryListScreen> {
                       contentPadding: EdgeInsets.zero,
                       onChanged: (val) => setModalState(() => tempSorting = val!),
                     ),
+                    RadioListTile<SortingType>(
+                      title: const Text('Favori: Çoktan Aza'),
+                      value: SortingType.favoritesHighToLow,
+                      groupValue: tempSorting,
+                      activeColor: Theme.of(context).primaryColor,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (val) => setModalState(() => tempSorting = val!),
+                    ),
+                    RadioListTile<SortingType>(
+                      title: const Text('Favori: Azdan Çoğa'),
+                      value: SortingType.favoritesLowToHigh,
+                      groupValue: tempSorting,
+                      activeColor: Theme.of(context).primaryColor,
+                      contentPadding: EdgeInsets.zero,
+                      onChanged: (val) => setModalState(() => tempSorting = val!),
+                    ),
+                    // YENİ FAVORİ SIRALAMA SEÇENEKLERİ SONU
+
+                    const SizedBox(height: 15),
                     const SizedBox(height: 15),
                     const Text('Puan Aralığı', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
                     const SizedBox(height: 5),
@@ -266,8 +287,17 @@ class _CategoryListScreenState extends State<CategoryListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final places = DataModel.filterAndSortItems(widget.selectedCategory, _minRatingFilter, 5.0, _currentSorting, widget.initialSubCategory, widget.initialSubSubCategory);
     final userNotifier = Provider.of<UserNotifier>(context);
+    final favoritePlaceIds = userNotifier.favoriteIds;
+    final places = DataModel.filterAndSortItems(
+        widget.selectedCategory,
+        _minRatingFilter,
+        5.0,
+        _currentSorting,
+        widget.initialSubCategory,
+        widget.initialSubSubCategory,
+        favoritePlaceIds);
+
 
     return Scaffold(
       appBar: AppBar(

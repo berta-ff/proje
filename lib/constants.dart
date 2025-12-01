@@ -1,5 +1,15 @@
 import 'package:flutter/material.dart';
 
+// constants.dart dosyası içinde:
+enum SortingType {
+  none,
+  ratingHighToLow,
+  ratingLowToHigh,
+  // 🔥 FAVORİ SIRALAMA SEÇENEKLERİ BURAYA EKLENİYOR
+  favoritesHighToLow, // Favori: Çoktan Aza
+  favoritesLowToHigh, // Favori: Azdan Çoğa
+}
+
 // Renkler
 const Color accentColor = Colors.lightBlue;
 const Color inputFillColor = Color(0xFFEFEFEF);
@@ -41,6 +51,5 @@ final List<String> shoppingSubCategories = [
   'Çarşı & Pazar & Cadde',
 ];
 
-// Enumlar
-enum SortingType { none, ratingHighToLow, ratingLowToHigh }
-enum CommentFilterType { all, min4Stars, exact5Stars, exact1Star }
+
+
